@@ -1,0 +1,12 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# 前端
+web/node_modules/
+web/dist/
+
+# macOS
+.DS_Store
