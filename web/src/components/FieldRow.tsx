@@ -1,11 +1,12 @@
 // 一方战场（从左到右一排随从）。
 
-import type { EntityView } from "../types";
+import type { EntityView, Lang } from "../types";
 import { CardView } from "./CardView";
 
 interface Props {
   side: "me" | "opponent";
   minions: EntityView[];
+  lang: Lang;
   selectableIds: Set<number>;
   selectedId: number | null;
   targetableIds: Set<number>;
@@ -18,6 +19,7 @@ interface Props {
 export function FieldRow({
   side,
   minions,
+  lang,
   selectableIds,
   selectedId,
   targetableIds,
@@ -35,6 +37,7 @@ export function FieldRow({
           key={m.entityId}
           entity={m}
           size="field"
+          lang={lang}
           selectable={selectableIds.has(m.entityId)}
           selected={selectedId === m.entityId}
           targetable={targetableIds.has(m.entityId)}

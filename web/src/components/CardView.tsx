@@ -1,11 +1,13 @@
-// 卡面渲染：手牌与场上共用。卡图没有数据源，用卡牌类型配色 + 中文卡名 +
-// 关键词角标表达。size="hand" 稍大（手牌可点），size="field" 稍小。
+// 卡面渲染：手牌与场上共用。卡图没有数据源，用卡牌类型配色 + 卡名（按
+// 语言 zhCN/英文）+ 关键词角标表达。size="hand" 稍大（手牌可点），
+// size="field" 稍小。
 
-import type { EntityView } from "../types";
+import type { EntityView, Lang } from "../types";
 
 interface Props {
   entity: EntityView;
   size: "hand" | "field";
+  lang: Lang;
   selectable?: boolean;
   selected?: boolean;
   targetable?: boolean;
@@ -29,6 +31,7 @@ const TYPE_CLASS = ["minion", "spell", "weapon", "hero"] as const;
 export function CardView({
   entity,
   size,
+  lang,
   selectable,
   selected,
   targetable,
@@ -36,6 +39,8 @@ export function CardView({
   extraClass,
   onClick,
 }: Props) {
+  const name = lang === "zh" ? entity.nameZh || entity.name : entity.name;
+  const text = lang === "zh" ? entity.textZh || entity.text : entity.text;
   const type = TYPE_CLASS[entity.cardType] ?? "minion";
   const isMinion = entity.cardType === 0;
   const cls = [
@@ -57,7 +62,7 @@ export function CardView({
     .filter(Boolean)
     .join(" ");
 
-  const tooltip = entity.text ? `${entity.name}\n${entity.text}` : entity.name;
+  const tooltip = text ? `${name}\n${text}` : name;
 
   return (
     <div
@@ -67,10 +72,8 @@ export function CardView({
       title={tooltip}
     >
       <span className="card-cost">{entity.cost}</span>
-      <span className="card-name">{entity.name}</span>
-      {size === "hand" && entity.text && (
-        <span className="card-text">{entity.text}</span>
-      )}
+      <span className="card-name">{name}</span>
+      {size === "hand" && text && <span className="card-text">{text}</span>}
       {isMinion && (
         <>
           <span className="card-atk">{entity.attack}</span>
