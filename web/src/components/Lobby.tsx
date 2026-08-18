@@ -1,8 +1,8 @@
-// 大厅：选卡组、选对手、填 seed，点开始。
+// 大厅：选卡组、选对手、选卡牌语言、填 seed，点开始。
 
 import { useState } from "react";
-import type { GameConfig } from "../types";
-import { BOT_LABELS, DECK_LABELS } from "../types";
+import type { GameConfig, Lang } from "../types";
+import { BOT_LABELS, DECK_LABELS, LANG_LABELS } from "../types";
 import type { ConnStatus } from "../useGame";
 
 interface Props {
@@ -14,6 +14,7 @@ interface Props {
 export function Lobby({ status, lastConfig, onStart }: Props) {
   const [deck, setDeck] = useState<GameConfig["deck"]>(lastConfig?.deck ?? "vanilla");
   const [bot, setBot] = useState<GameConfig["bot"]>(lastConfig?.bot ?? "rule");
+  const [lang, setLang] = useState<Lang>(lastConfig?.lang ?? "zh");
   const [seedText, setSeedText] = useState(
     lastConfig?.seed == null ? "" : String(lastConfig.seed),
   );
@@ -26,7 +27,7 @@ export function Lobby({ status, lastConfig, onStart }: Props) {
       setSeedText("");
       return;
     }
-    onStart({ deck, bot, seed });
+    onStart({ deck, bot, seed, lang });
   };
 
   return (
@@ -65,6 +66,17 @@ export function Lobby({ status, lastConfig, onStart }: Props) {
           onChange={(e) => setSeedText(e.target.value.trim())}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
+      </label>
+
+      <label className="lobby-field">
+        <span>卡牌语言</span>
+        <select value={lang} onChange={(e) => setLang(e.target.value as Lang)}>
+          {(Object.keys(LANG_LABELS) as Lang[]).map((l) => (
+            <option key={l} value={l}>
+              {LANG_LABELS[l]}
+            </option>
+          ))}
+        </select>
       </label>
 
       <button className="start-btn" disabled={!ready} onClick={submit}>

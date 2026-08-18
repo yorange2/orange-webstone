@@ -15,7 +15,8 @@
 // 完整 state 只用于合法动作/手牌（board 帧里双方手牌都是空的）。
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ActionView, BoardView, EntityView, GameState } from "../types";
+import type { ActionView, BoardView, EntityView, GameState, Lang } from "../types";
+import { LANG_LABELS } from "../types";
 import type { GameApi } from "../useGame";
 import { ChoiceModal } from "./ChoiceModal";
 import { FieldRow } from "./FieldRow";
@@ -23,6 +24,10 @@ import { Hand } from "./Hand";
 import { HeroPanel } from "./HeroPanel";
 
 const HERO_ENTITY = -1; // 英雄攻击的占位"来源 id"（不在任何一方场上）
+
+/** 按当前语言取卡名（中文查不到回落英文）。 */
+const displayName = (e: EntityView, lang: Lang) =>
+  lang === "zh" ? e.nameZh || e.name : e.name;
 
 type Selection =
   | { kind: "play"; cardIndex: number }
@@ -40,6 +45,7 @@ const NO_FLASH: Flash = { ids: new Set(), meHero: false, oppHero: false };
 
 export function Game({ api }: { api: GameApi }) {
   const state = api.state;
+  const lang = api.lang;
   const [sel, setSel] = useState<Selection>(null);
   const [boardView, setBoardView] = useState(false);
   const [flash, setFlash] = useState<Flash>(NO_FLASH);
@@ -65,6 +71,8 @@ export function Game({ api }: { api: GameApi }) {
   // board 帧之间的效果比对：掉血闪烁 + 派生日志（伤害/消灭行）。
   // 战吼、法术这类效果不体现在动作日志里（日志只有"出 X"），逐帧比对
   // 把它们变成玩家看得见的行——"对方 X 受到 6 点伤害 / 被消灭"。
+  // 卡名按当前语言渲染；lang 在依赖里，切换语言后重跑只是 prev==next
+  // 的空比（不会重复推日志），新行会用新语言。
   useEffect(() => {
     const prev = prevBoardRef.current;
     const next = api.board;
@@ -77,9 +85,9 @@ export function Game({ api }: { api: GameApi }) {
       for (const p of aPrev) {
         const n = aNext.find((x) => x.entityId === p.entityId);
         if (!n) {
-          lines.push(`${prefix}${p.name} 被消灭`);
+          lines.push(`${prefix}${displayName(p, lang)} 被消灭`);
         } else if (n.health < p.health) {
-          lines.push(`${prefix}${n.name} 受到 ${p.health - n.health} 点伤害`);
+          lines.push(`${prefix}${displayName(n, lang)} 受到 ${p.health - n.health} 点伤害`);
         }
       }
     };
@@ -112,7 +120,7 @@ export function Game({ api }: { api: GameApi }) {
       const t = setTimeout(() => setFlash(NO_FLASH), 750);
       return () => clearTimeout(t);
     }
-  }, [api.board, api.addLog]);
+  }, [api.board, api.addLog, lang]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setSel(null);
@@ -224,6 +232,7 @@ export function Game({ api }: { api: GameApi }) {
         <FieldRow
           side="opponent"
           minions={opponent.field}
+          lang={lang}
           selectableIds={new Set()}
           selectedId={null}
           targetableIds={targetIds}
@@ -232,11 +241,22 @@ export function Game({ api }: { api: GameApi }) {
           onMinionClick={clickMinion("opponent")}
         />
 
-        {/* 中栏：回合信息 + 结束回合 */}
+        {/* 中栏：回合信息 + 语言切换 + 结束回合 */}
         <div className="mid-bar">
           <span className="turn-badge">
             第 {view.turn} 回合 {acting ? "· 对手回合…" : state.humanTurn ? "· 你的回合" : ""}
           </span>
+          <div className="lang-toggle" role="group" aria-label="卡牌语言">
+            {(Object.keys(LANG_LABELS) as Lang[]).map((l) => (
+              <button
+                key={l}
+                className={lang === l ? "is-active" : ""}
+                onClick={() => api.setLang(l)}
+              >
+                {LANG_LABELS[l]}
+              </button>
+            ))}
+          </div>
           {state.humanTurn && !state.awaitingChoice && endTurn && (
             <button
               className="end-turn-btn"
@@ -252,6 +272,7 @@ export function Game({ api }: { api: GameApi }) {
         <FieldRow
           side="me"
           minions={me.field}
+          lang={lang}
           selectableIds={derived.attackableIds}
           selectedId={sel?.kind === "attack" ? sel.entityId : null}
           targetableIds={targetIds}
@@ -274,6 +295,7 @@ export function Game({ api }: { api: GameApi }) {
         {/* 手牌：board 帧里没有，永远取完整 state */}
         <Hand
           hand={state.me.hand}
+          lang={lang}
           selectableIndexes={derived.playableIndexes}
           selectedIndex={sel?.kind === "play" ? sel.cardIndex : null}
           disabled={!state.humanTurn || state.awaitingChoice || acting}

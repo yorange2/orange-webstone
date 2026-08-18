@@ -20,13 +20,16 @@ from hearthstone_os.bots import BOTS
 from hearthstone_os.decks import random_deck, vanilla
 from hearthstone_os.env import Env, describe_action
 
-from .cards_info import text_for
+from .cards_info import text_for, zh_for
 from .view import board_event, state_dict
 
 __all__ = ["GameSession", "SessionError"]
 
 #: 大厅可选对手（键 = WS start 消息里的 bot 字段）
 BOTS_AVAILABLE: dict[str, str] = {"rule": "规则", "greedy": "贪婪", "random": "随机"}
+
+#: 卡面/日志语言（键 = WS start / lang 消息里的 lang 字段）
+LANG_VALUES: tuple[str, ...] = ("zh", "en")
 
 MAX_GAME_STEPS = 5000  # 引擎自身的兜底（rl/env.rs），这里只是保险
 
@@ -49,11 +52,14 @@ class GameSession:
     deck: str
     bot: str
     seed: int
+    lang: str = "zh"  # 卡面/日志语言，默认中文；对局中可经 WS lang 消息切换
     seat: int = 1  # 人类固定 P1
 
     def __post_init__(self) -> None:
         if self.bot not in BOTS_AVAILABLE:
             raise SessionError(f"未知对手: {self.bot}")
+        if self.lang not in LANG_VALUES:
+            raise SessionError(f"未知语言: {self.lang}（可选 zh | en）")
         self.env = Env(deck=_deck_ids(self.deck, self.seed), seed=self.seed)
         self._bot = BOTS[self.bot](seed=self.seed)
         self._steps = 0
@@ -102,18 +108,39 @@ class GameSession:
 
         return events, state_dict(self.env, self.seat, seed=self.seed, bot=self.bot)
 
-    @staticmethod
-    def _describe(action, obs) -> str:
+    def _describe(self, action, obs) -> str:
         """动作日志行；出牌附上卡面效果文本（否则战吼类效果完全不可见）。
 
-        卡面文本是官方公开信息，不涉及 bot 手牌泄漏。
+        卡面文本是官方公开信息，不涉及 bot 手牌泄漏。lang=zh 时把行内
+        嵌的英文卡名替换为中文名（describe_action 的模板本身已是中文），
+        并附中文卡面文本。
         """
         line = describe_action(action, obs)
         if action.kind == "play" and 0 <= action.card_index < len(obs.me.hand):
             card = obs.me.hand[action.card_index]
-            text = text_for(card.card_id, card.name).replace("\n", " ").strip()
+            text = (zh_for(card.card_id, card.name)[1] or text_for(card.card_id, card.name)) \
+                if self.lang == "zh" else text_for(card.card_id, card.name)
+            text = text.replace("\n", " ").strip()
             if text:
                 line += f"——{text}"
+        if self.lang == "zh":
+            line = self._localize_names(line, obs)
+        return line
+
+    @staticmethod
+    def _localize_names(line: str, obs) -> str:
+        """把行内嵌的英文卡名替换成中文名。
+
+        只替换本动作可能涉及的实体（我方手牌 + 双方场上）的名字，
+        长名先换避免子串误伤（如 Skeleton 是 Skeleton Knight 的前缀）。
+        """
+        names: set[tuple[str, str]] = set()
+        for ent in obs.me.hand + obs.me.field + obs.opponent.field:
+            name_zh, _ = zh_for(ent.card_id, ent.name)
+            if name_zh and name_zh != ent.name:
+                names.add((ent.name, name_zh))
+        for en, zh in sorted(names, key=lambda p: -len(p[0])):
+            line = line.replace(en, zh)
         return line
 
     def _step(self, index: int) -> None:

@@ -225,6 +225,26 @@ body {
   border-bottom: 1px dashed var(--line);
 }
 .turn-badge { font-size: 13px; color: var(--muted); }
+/* 中栏语言切换：小段选钮 */
+.lang-toggle {
+  display: flex;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.lang-toggle button {
+  font-size: 12px;
+  padding: 5px 10px;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+.lang-toggle button.is-active {
+  color: #14100a;
+  background: var(--gold);
+  font-weight: 600;
+}
 .end-turn-btn {
   font-size: 14px;
   font-weight: 600;

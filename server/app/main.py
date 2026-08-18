@@ -6,14 +6,17 @@
 协议（camelCase，字段形状见 `view.py` / `web/src/types.ts`）：
 
     客户端 → 服务端
-      {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null}
+      {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null,"lang":"zh"|"en"}
       {"type":"action","index":int}
+      {"type":"lang","lang":"zh"|"en"}             # 对局中切语言（影响后续
+                                                   # 日志行；卡面每帧双语言，
+                                                   # 客户端切换即时生效）
 
     服务端 → 客户端
       {"type":"state", ...view.state_dict()...}    # 人类回合的完整一帧
       {"type":"board","text":"...","view":{...}}   # 公开局面帧：人类动作的
                                                    # 即时结果 + bot 回合每一步
-      {"type":"log","text":"出 Bloodfen Raptor(2费)"}   # 兼容保留（暂未使用）
+      {"type":"log","text":"出 血沼迅猛龙(2费)"}    # 兼容保留（暂未使用）
       {"type":"error","message":"..."}             # 非法动作等
 
 `board.view` 是 bot 视角剥掉手牌的公开快照（`view.public_snapshot`），
@@ -32,7 +35,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import _paths  # noqa: F401  先接 orange-reinforcement 再导入 session
-from .session import GameSession, SessionError
+from .session import LANG_VALUES, GameSession, SessionError
 
 __all__ = ["app"]
 
@@ -62,11 +65,21 @@ async def game_socket(ws: WebSocket) -> None:
                         bot=msg.get("bot", "rule"),
                         seed=int(msg["seed"]) if msg.get("seed") is not None
                         else _random_seed(),
+                        lang=msg.get("lang", "zh"),
                     )
                 except SessionError as e:
                     await ws.send_json({"type": "error", "message": str(e)})
                     continue
                 await ws.send_json({"type": "state", **session.start_state()})
+            elif mtype == "lang":
+                if session is None:
+                    await ws.send_json({"type": "error", "message": "还没开局（先发 start）"})
+                    continue
+                lang = msg.get("lang")
+                if lang not in LANG_VALUES:
+                    await ws.send_json({"type": "error", "message": f"未知语言: {lang}"})
+                    continue
+                session.lang = lang  # 影响后续日志行；卡面双语言、前端即时切换
             elif mtype == "action":
                 if session is None:
                     await ws.send_json({"type": "error", "message": "还没开局（先发 start）"})

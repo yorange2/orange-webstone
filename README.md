@@ -24,18 +24,20 @@
   handCount）；人类手牌在这个视角里本来就隐藏。回到人类回合发一帧完整
   state（含手牌与合法动作）。客户端用 `awaiting` 标志锁交互并显示
   "对方行动中…"。
-- **无卡图**：卡面用卡牌类型配色 + 引擎卡表的英文原名 + 官方效果文本渲染。
-  文本来自 `orange-stone/cards/cards.json`（服务端启动时读一次，先按
-  card_id 查、查不到按卡名回退——与 orange-stone 自己的对拍口径一致，
-  白板卡无文本）。中文名映射是后续项。
+- **无卡图**：卡面用卡牌类型配色 + 卡名 + 官方效果文本渲染，**默认中文
+  （zhCN）、大厅或对局中可切英文**。文本来自 `orange-stone/cards/cards.json`
+  （英文）与 `server/data/cards_zh.json`（中文；先按 card_id 查、查不到按
+  卡名回退——与 orange-stone 自己的对拍口径一致，白板卡无文本）。对局日志
+  行（出牌/攻击/伤害/消灭）随语言切换，卡面双语言每帧都带、切换即时生效。
 
 ## WS 协议
 
 ```
-C→S  {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null}
+C→S  {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null,"lang":"zh"|"en"}
 C→S  {"type":"action","index":int}
+C→S  {"type":"lang","lang":"zh"|"en"}     # 对局中切语言（影响后续日志行）
 S→C  {"type":"state", turn, done, winner, awaitingChoice, me, opponent, legal[], seat, humanTurn, seed, bot}
-S→C  {"type":"board","text":"出 Sen'jin Shieldmasta(4费)","view":{turn, done, winner, me, opponent}}
+S→C  {"type":"board","text":"出 森金持盾卫士(4费)","view":{turn, done, winner, me, opponent}}
        # 公开局面帧：人类动作的即时结果 + bot 回合每一步（双方手牌都剥掉）
 S→C  {"type":"error","message":"..."}
 ```
@@ -68,7 +70,21 @@ cd web && npm run build
 
 服务端通过 `ORANGE_REINFORCEMENT_PATH`（默认工作区内的
 `../orange-reinforcement`）复用 `hearthstone_os`；`ORANGE_WEB_BOT_DELAY`
-控制 bot 每步日志的间隔（默认 0.7s，测试设 0）。
+控制 bot 每步日志的间隔（默认 0.7s，测试设 0）。卡库路径可用
+`ORANGE_STONE_CARDS_JSON`（英文）、`WEBSTONE_CARDS_ZH_JSON`（中文）覆盖。
+
+### 中文卡面数据（zhCN）
+
+`server/data/cards_zh.json` 由 `server/scripts/fetch_zh.py` 生成并**提交进
+仓库**（服务端离线可用）：下载 hearthstonejson 的 zhCN 全量 dump（含附魔/
+英雄技能/衍生物），按 **orange-stone 引擎 `all_card_ids()` ∪ 官方卡库
+cards.json** 的 id 集合切片——手写 id（`CLASSIC_001` 等）用一张只含该卡的
+小对局向引擎要英文名，再经 enUS dump 按名字配对（与引擎对拍同口径）；9 张
+引擎自造衍生物无官方条目，中文名人工维护在脚本的 `MANUAL_ZH` 里。刷新：
+
+```bash
+.venv/bin/python server/scripts/fetch_zh.py    # 需要装好 orange-stone wheel
+```
 
 ## 测试
 
@@ -78,8 +94,8 @@ cd web && npm run build
 
 ## 已知边界（MVP 有意为之）
 
-- **英文卡名与卡面文本**：引擎卡表原名 + cards.json 官方文本（如
-  "Bloodfen Raptor" / "Taunt"）；中文名/中文文本映射待做。
+- **抉择弹窗的选项标签为英文**：发现/抉择选项走引擎动作描述
+  （"Choose: ..."），随从/英雄的替换形态也是英文；卡面与日志均已中文。
 - **无卡图/无音效**：动画靠 board 逐帧渲染（入场 pop + 掉血红闪），
   没有攻击飞行动画。
 - **无换牌（mulligan）**：引擎起手固定 hand_size，无需选择。
@@ -88,10 +104,9 @@ cd web && npm run build
 
 ## 路线图
 
-1. 中文卡名/卡面文本映射（cards.json 只有英文；经典卡中文表在
-   `orange-stone/docs/finished/classic-cards-zh.md`，需按名字配对）
-2. 在线双人 PvP（房间号 + 按座位分发视角，session.py 的驱动结构已支持）
-3. 训练好的 RL 智能体当对手（`hearthstone_os/models/agent_full_s*.pt`，
+1. 在线双人 PvP（房间号 + 按座位分发视角，session.py 的驱动结构已支持）
+2. 训练好的 RL 智能体当对手（`hearthstone_os/models/agent_full_s*.pt`，
    RuleBot 同接口可直接换）
-4. 卡组编辑器（全池选卡，服务端校验合法）
-5. 卡图（外部 API 或本地资源）、攻击/施法飞行动画
+3. 卡组编辑器（全池选卡，服务端校验合法）
+4. 卡图（外部 API 或本地资源）、攻击/施法飞行动画
+5. 抉择弹窗与替换形态的中文（引擎动作描述本地化）

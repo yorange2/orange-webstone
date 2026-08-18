@@ -3,24 +3,28 @@
 字段名转 camelCase，与 `web/src/types.ts` 一一对应；这里加一个字段
 前端就要同步一份。观测里的卡名是引擎卡表的官方英文名（如 "Bloodfen
 Raptor"）；`text` 从官方卡库 cards.json 查（见 cards_info.py，先按
-card_id 再按卡名回退）。中文名映射是后续项。
+card_id 再按卡名回退），`nameZh`/`textZh` 从 zhCN 切片查——每帧都带
+双语言，客户端切语言不用重新请求。
 """
 
 from __future__ import annotations
 
 from hearthstone_os.env import Action, Env
 
-from .cards_info import text_for
+from .cards_info import text_for, zh_for
 
 __all__ = ["board_event", "public_snapshot", "state_dict"]
 
 
 def entity(e) -> dict:
+    name_zh, text_zh = zh_for(e.card_id, e.name)
     return {
         "entityId": e.entity_id,
         "cardId": e.card_id,
         "name": e.name,
         "text": text_for(e.card_id, e.name),
+        "nameZh": name_zh,
+        "textZh": text_zh,
         "cost": e.cost,
         "attack": e.attack,
         "health": e.health,

@@ -8,6 +8,10 @@ export interface EntityView {
   name: string;
   /** 卡面效果文本（官方英文，白板卡为空串）。 */
   text: string;
+  /** 中文卡名（zhCN；查不到为空串，前端回落英文名）。 */
+  nameZh: string;
+  /** 中文卡面效果文本（白板卡为空串）。 */
+  textZh: string;
   cost: number;
   attack: number;
   health: number;
@@ -95,7 +99,17 @@ export interface GameConfig {
   deck: "vanilla" | "random";
   bot: "rule" | "greedy" | "random";
   seed: number | null;
+  /** 卡面/日志语言，默认中文；对局中可切。 */
+  lang: Lang;
 }
+
+/** 卡面/日志语言（服务端 session.LANG_VALUES）。 */
+export type Lang = "zh" | "en";
+
+export const LANG_LABELS: Record<Lang, string> = {
+  zh: "中文",
+  en: "English",
+};
 
 export const DECK_LABELS: Record<GameConfig["deck"], string> = {
   vanilla: "白板卡组（15 张 ×2）",

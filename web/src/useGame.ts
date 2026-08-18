@@ -2,7 +2,7 @@
 // 断线重连策略：MVP 不自动重连（对局不可恢复），断线回大厅并提示。
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { BoardView, GameConfig, GameState, ServerMessage } from "./types";
+import type { BoardView, GameConfig, GameState, Lang, ServerMessage } from "./types";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -14,12 +14,16 @@ export interface GameApi {
   log: string[];
   error: string | null;
   config: GameConfig | null;
+  /** 当前卡面/日志语言（默认中文）。 */
+  lang: Lang;
   /** 已发动作、还没收到下一帧 state（bot 回合进行中）。 */
   awaiting: boolean;
   start: (cfg: GameConfig) => void;
   sendAction: (index: number) => void;
   restart: () => void;
   clearError: () => void;
+  /** 对局中切语言：卡面即时切换，后续日志行用新语言。 */
+  setLang: (lang: Lang) => void;
   /** 追加一条客户端派生的日志（如逐帧比对出的伤害/消灭行）。 */
   addLog: (text: string) => void;
 }
@@ -98,6 +102,14 @@ export function useGame(): GameApi {
     [],
   );
 
+  const setLang = useCallback(
+    (lang: Lang) => {
+      send({ type: "lang", lang });
+      setConfig((prev) => (prev ? { ...prev, lang } : prev));
+    },
+    [send],
+  );
+
   return {
     status,
     state,
@@ -105,11 +117,13 @@ export function useGame(): GameApi {
     log,
     error,
     config,
+    lang: config?.lang ?? "zh",
     awaiting,
     start,
     sendAction,
     restart,
     clearError: () => setError(null),
+    setLang,
     addLog,
   };
 }
