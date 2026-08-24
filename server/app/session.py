@@ -21,6 +21,7 @@ from hearthstone_os.decks import random_deck, vanilla
 from hearthstone_os.env import Env, describe_action
 
 from .cards_info import text_for, zh_for
+from .debuglog import log, summarize
 from .view import board_event, state_dict
 
 __all__ = ["GameSession", "SessionError"]
@@ -54,6 +55,7 @@ class GameSession:
     seed: int
     lang: str = "zh"  # 卡面/日志语言，默认中文；对局中可经 WS lang 消息切换
     seat: int = 1  # 人类固定 P1
+    sid: str = "-"  # 调试日志里的连接标识（见 debuglog）
 
     def __post_init__(self) -> None:
         if self.bot not in BOTS_AVAILABLE:
@@ -63,6 +65,17 @@ class GameSession:
         self.env = Env(deck=_deck_ids(self.deck, self.seed), seed=self.seed)
         self._bot = BOTS[self.bot](seed=self.seed)
         self._steps = 0
+        #: 人类动作下标的历史——出问题时和 seed 一起构成可复现的最小信息
+        #: （`scripts/replay.py` 直接吃这两样重放整局）。
+        self.history: list[int] = []
+
+    def repro(self) -> str:
+        """复现这一局所需的全部信息（日志里出错时打印，可直接喂 replay.py）。"""
+        actions = ",".join(str(i) for i in self.history)
+        return (
+            f"--seed {self.seed} --deck {self.deck} --bot {self.bot} "
+            f"--lang {self.lang} --actions {actions or '-'}"
+        )
 
     # ------------------------------------------------------------ 查询
 
@@ -95,18 +108,27 @@ class GameSession:
             raise SessionError(f"非法动作下标: {index}")
         action = legal[index]
         line = self._describe(action, self.env.observe())  # step 前的观测
+        log.debug("[%s] 人 idx=%d/%d %s", self.sid, index, len(legal), line)
+        self.history.append(index)
         self._step(index)
         events = [board_event(self.env, self.seat, line)]
+        log.debug("[%s]   · %s", self.sid, summarize(events[-1]["view"]))
 
         # bot 回合逐动作跑，每个动作一帧公开局面
         while not self.env.done and not self.human_turn:
             obs = self.env.observe()
             legal = self.env.legal_actions()
             bot_action = self._bot.choose(obs, legal)
+            bot_line = self._describe(bot_action, obs)
+            log.debug("[%s] bot idx=%d/%d %s", self.sid, bot_action.index, len(legal), bot_line)
             self._step(bot_action.index)
-            events.append(board_event(self.env, self.seat, self._describe(bot_action, obs)))
+            events.append(board_event(self.env, self.seat, bot_line))
+            log.debug("[%s]   · %s", self.sid, summarize(events[-1]["view"]))
 
-        return events, state_dict(self.env, self.seat, seed=self.seed, bot=self.bot)
+        state = state_dict(self.env, self.seat, seed=self.seed, bot=self.bot)
+        if state["done"]:
+            log.info("[%s] 对局结束 winner=%s | %s", self.sid, state["winner"], self.repro())
+        return events, state
 
     def _describe(self, action, obs) -> str:
         """动作日志行；出牌附上卡面效果文本（否则战吼类效果完全不可见）。

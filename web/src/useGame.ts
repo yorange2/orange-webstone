@@ -1,5 +1,8 @@
 // WS 连接与对局状态的 hook：一个连接一局对局。
 // 断线重连策略：MVP 不自动重连（对局不可恢复），断线回大厅并提示。
+//
+// 浏览器侧的报错（未捕获异常、Promise rejection、坏帧）通过 clientlog 消息
+// 转发到服务端终端——调试时只看一个终端就够，玩家不用去开 devtools。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { BoardView, GameConfig, GameState, Lang, ServerMessage } from "./types";
@@ -30,6 +33,14 @@ export interface GameApi {
 
 const MAX_LOG = 100;
 
+/** 把浏览器侧的错误转发给服务端（连接没开就退回 console，不阻塞 UI）。 */
+function report(ws: WebSocket, text: string, stack?: string): void {
+  console.error("[webstone]", text, stack ?? "");
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "clientlog", level: "error", text, stack }));
+  }
+}
+
 export function useGame(): GameApi {
   const [status, setStatus] = useState<ConnStatus>("connecting");
   const [state, setState] = useState<GameState | null>(null);
@@ -46,8 +57,24 @@ export function useGame(): GameApi {
     wsRef.current = ws;
     ws.onopen = () => setStatus("open");
     ws.onclose = () => setStatus("closed");
+    ws.onerror = () => report(ws, "WebSocket 连接出错");
+
+    // 未捕获异常 / Promise rejection → 服务端日志（React 渲染错误也走 onerror）
+    const onError = (e: ErrorEvent) =>
+      report(ws, `${e.message} @ ${e.filename}:${e.lineno}:${e.colno}`, e.error?.stack);
+    const onRejection = (e: PromiseRejectionEvent) =>
+      report(ws, `未处理的 Promise rejection: ${e.reason}`, e.reason?.stack);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+
     ws.onmessage = (ev) => {
-      const msg: ServerMessage = JSON.parse(ev.data);
+      let msg: ServerMessage;
+      try {
+        msg = JSON.parse(ev.data);
+      } catch {
+        report(ws, `收到无法解析的帧: ${String(ev.data).slice(0, 200)}`);
+        return;
+      }
       if (msg.type === "state") {
         const { type: _t, ...rest } = msg;
         setState(rest);
@@ -64,7 +91,11 @@ export function useGame(): GameApi {
         setBoard(null);
       }
     };
-    return () => ws.close();
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+      ws.close();
+    };
   }, []);
 
   const send = useCallback((obj: object) => {

@@ -227,3 +227,61 @@ def test_ws_action_before_start_gets_error():
             ws.send_json({"type": "action", "index": 0})
             msg = ws.receive_json()
             assert msg["type"] == "error"
+
+
+# ---------------------------------------------------------------- 调试日志
+
+def test_summarize_reads_both_frame_shapes():
+    """`summarize` 要同时吃 state 帧和 board 帧（后者没有 legal/humanTurn）。"""
+    from app.debuglog import summarize
+    from app.view import public_snapshot
+
+    session = GameSession(deck="vanilla", bot="rule", seed=7)
+    state_line = summarize(session.start_state())
+    assert "turn=" in state_line and "human=T" in state_line and "legal=" in state_line
+
+    board_line = summarize(public_snapshot(session.env, session.seat))
+    assert "turn=" in board_line and "human=" not in board_line and "legal=" not in board_line
+
+
+def test_repro_line_tracks_human_actions():
+    """repro 行要带全部开局参数 + 人类动作下标（replay.py 直接吃这串）。"""
+    session = GameSession(deck="vanilla", bot="rule", seed=7)
+    assert "--seed 7" in session.repro() and "--actions -" in session.repro()
+    session.step_human(0)  # 结束回合
+    assert "--actions 0" in session.repro()
+
+
+def test_replay_reproduces_the_same_game():
+    """同 seed + 同动作序列，replay 走出来的局面和原局逐帧一致。"""
+    live = GameSession(deck="vanilla", bot="rule", seed=99)
+    _, state = live.step_human(0)
+    indices = ",".join(str(i) for i in live.history)
+
+    from scripts.replay import main as replay_main
+
+    assert replay_main(["--seed", "99", "--deck", "vanilla", "--bot", "rule",
+                        "--actions", indices]) == 0
+
+    again = GameSession(deck="vanilla", bot="rule", seed=99)
+    _, state2 = again.step_human(0)
+    assert state2 == state
+
+
+def test_clientlog_message_is_accepted_and_logged(caplog):
+    """浏览器转发来的报错要落进服务端日志，且不打断对局。"""
+    import logging
+
+    with TestClient(app) as client, client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "start", "deck": "vanilla", "bot": "rule", "seed": 3})
+        assert ws.receive_json()["type"] == "state"
+        with caplog.at_level(logging.WARNING, logger="webstone"):
+            ws.send_json({"type": "clientlog", "level": "error",
+                          "text": "boom", "stack": "at Foo"})
+            ws.send_json({"type": "action", "index": 0})  # 后续动作照常处理
+            msg = ws.receive_json()
+            while msg["type"] == "board":
+                msg = ws.receive_json()
+            assert msg["type"] == "state"
+    assert any("[web]" in r.getMessage() and "boom" in r.getMessage()
+               for r in caplog.records)

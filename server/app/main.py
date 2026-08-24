@@ -8,6 +8,8 @@
     客户端 → 服务端
       {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null,"lang":"zh"|"en"}
       {"type":"action","index":int}
+      {"type":"clientlog","level":"error","text":"...","stack":"..."}
+                                                   # 浏览器侧报错转发（开发模式）
       {"type":"lang","lang":"zh"|"en"}             # 对局中切语言（影响后续
                                                    # 日志行；卡面每帧双语言，
                                                    # 客户端切换即时生效）
@@ -29,18 +31,22 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import suppress
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import _paths  # noqa: F401  先接 orange-reinforcement 再导入 session
+from .debuglog import log, next_session_id, setup as setup_logging, summarize
 from .session import LANG_VALUES, GameSession, SessionError
 
 __all__ = ["app"]
 
 BOT_STEP_DELAY = float(os.environ.get("ORANGE_WEB_BOT_DELAY", "0.7"))
 STATIC_DIR = Path(__file__).resolve().parents[2] / "web" / "dist"
+
+setup_logging()
 
 app = FastAPI(title="orange-webstone")
 
@@ -53,44 +59,57 @@ async def healthz() -> dict:
 @app.websocket("/ws")
 async def game_socket(ws: WebSocket) -> None:
     await ws.accept()
+    sid = next_session_id()
+    log.info("[%s] 连接建立", sid)
     session: GameSession | None = None
     try:
         while True:
             msg = await ws.receive_json()
             mtype = msg.get("type")
             if mtype == "start":
+                seed = int(msg["seed"]) if msg.get("seed") is not None else _random_seed()
                 try:
                     session = GameSession(
                         deck=msg.get("deck", "vanilla"),
                         bot=msg.get("bot", "rule"),
-                        seed=int(msg["seed"]) if msg.get("seed") is not None
-                        else _random_seed(),
+                        seed=seed,
                         lang=msg.get("lang", "zh"),
+                        sid=sid,
                     )
                 except SessionError as e:
+                    log.warning("[%s] 开局被拒: %s | 请求=%s", sid, e, msg)
                     await ws.send_json({"type": "error", "message": str(e)})
                     continue
-                await ws.send_json({"type": "state", **session.start_state()})
+                state = session.start_state()
+                log.info(
+                    "[%s] 开局 deck=%s bot=%s seed=%s lang=%s",
+                    sid, session.deck, session.bot, session.seed, session.lang,
+                )
+                log.debug("[%s]   · %s", sid, summarize(state))
+                await ws.send_json({"type": "state", **state})
             elif mtype == "lang":
                 if session is None:
-                    await ws.send_json({"type": "error", "message": "还没开局（先发 start）"})
+                    await _reject(ws, sid, "还没开局（先发 start）", msg)
                     continue
                 lang = msg.get("lang")
                 if lang not in LANG_VALUES:
-                    await ws.send_json({"type": "error", "message": f"未知语言: {lang}"})
+                    await _reject(ws, sid, f"未知语言: {lang}", msg)
                     continue
+                log.debug("[%s] 切语言 %s → %s", sid, session.lang, lang)
                 session.lang = lang  # 影响后续日志行；卡面双语言、前端即时切换
             elif mtype == "action":
                 if session is None:
-                    await ws.send_json({"type": "error", "message": "还没开局（先发 start）"})
+                    await _reject(ws, sid, "还没开局（先发 start）", msg)
                     continue
                 index = msg.get("index")
                 if not isinstance(index, int):
-                    await ws.send_json({"type": "error", "message": "action 需要整数 index"})
+                    await _reject(ws, sid, "action 需要整数 index", msg)
                     continue
                 try:
                     events, state = session.step_human(index)
                 except SessionError as e:
+                    # 动作被引擎/会话拒掉：连 repro 一起打，贴日志即可复现
+                    log.warning("[%s] 动作被拒: %s | repro: %s", sid, e, session.repro())
                     await ws.send_json({"type": "error", "message": str(e)})
                     continue
                 # 人类动作结果即时；bot 动作逐帧、每帧间隔 BOT_STEP_DELAY；
@@ -99,11 +118,39 @@ async def game_socket(ws: WebSocket) -> None:
                     await ws.send_json(event)
                     if i < len(events) - 1:
                         await asyncio.sleep(BOT_STEP_DELAY)
+                log.debug("[%s] > state %s", sid, summarize(state))
                 await ws.send_json({"type": "state", **state})
+            elif mtype == "clientlog":
+                # 浏览器侧的报错转发到同一条终端流里——UI 崩了在服务端也看得见
+                log.warning(
+                    "[%s] [web] %s: %s%s",
+                    sid,
+                    msg.get("level", "error"),
+                    msg.get("text", ""),
+                    f"\n{msg['stack']}" if msg.get("stack") else "",
+                )
             else:
-                await ws.send_json({"type": "error", "message": f"未知消息类型: {mtype}"})
+                await _reject(ws, sid, f"未知消息类型: {mtype}", msg)
     except WebSocketDisconnect:
-        pass  # 玩家关页面，对局直接丢弃
+        log.info(
+            "[%s] 断开%s", sid,
+            f" | repro: {session.repro()}" if session is not None else "",
+        )  # 玩家关页面，对局直接丢弃
+    except Exception:
+        # 服务端 bug：完整栈 + repro 落到终端，同时告知客户端（否则页面只会静默卡住）
+        log.exception(
+            "[%s] 服务端异常%s", sid,
+            f" | repro: {session.repro()}" if session is not None else "",
+        )
+        with suppress(Exception):
+            await ws.send_json({"type": "error", "message": "服务端异常，详见终端日志"})
+        raise
+
+
+async def _reject(ws: WebSocket, sid: str, message: str, msg: dict) -> None:
+    """协议层拒绝：日志里带上原始消息（客户端只收到人话）。"""
+    log.warning("[%s] 拒绝: %s | 消息=%s", sid, message, msg)
+    await ws.send_json({"type": "error", "message": message})
 
 
 def _random_seed() -> int:
