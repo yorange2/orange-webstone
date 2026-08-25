@@ -36,6 +36,8 @@
 C→S  {"type":"start","deck":"vanilla"|"random","bot":"rule"|"greedy"|"random","seed":int|null,"lang":"zh"|"en"}
 C→S  {"type":"action","index":int}
 C→S  {"type":"lang","lang":"zh"|"en"}     # 对局中切语言（影响后续日志行）
+C→S  {"type":"clientlog","level":"error","text":"...","stack":"..."}
+       # 浏览器侧报错转发到服务端终端（见「调试」）
 S→C  {"type":"state", turn, done, winner, awaitingChoice, me, opponent, legal[], seat, humanTurn, seed, bot}
 S→C  {"type":"board","text":"出 森金持盾卫士(4费)","view":{turn, done, winner, me, opponent}}
        # 公开局面帧：人类动作的即时结果 + bot 回合每一步（双方手牌都剥掉）
@@ -91,6 +93,44 @@ cards.json** 的 id 集合切片——手写 id（`CLASSIC_001` 等）用一张�
 ```bash
 .venv/bin/python -m pytest server/tests -q   # GameSession 整局 + WS 协议端到端
 ```
+
+## 调试：终端日志与重放
+
+后端终端就是**唯一要看的地方**——服务端每一步都打日志，浏览器侧的报错也
+经 `clientlog` 消息转发过来。遇到问题把这一段终端输出整段贴出来即可，
+不用另开 devtools。
+
+级别由 `ORANGE_WEB_LOG` 控制（`dev.sh` 默认 `debug`）：
+
+| 级别 | 打什么 |
+| --- | --- |
+| `info` | 连接/开局（含 seed）/对局结束/动作被拒/断开/服务端异常栈 |
+| `debug` | 再加人类与 bot 的每个动作、每帧局面摘要 |
+
+```
+15:26:24.487 [ws1] 开局 deck=vanilla bot=rule seed=3141592653 lang=zh
+15:26:24.487 [ws1]   · turn=1 human=T me=30hp 4手 0场[] 1/1法力 opp=30hp 5手 0场[] 0/0法力 legal=1
+15:26:31.102 [ws1] 人 idx=3/4 出 血沼迅猛龙(2费)
+15:26:31.104 [ws1]   · turn=1 human=T me=30hp 4手 1场[3/2] 0/2法力
+15:26:31.810 [ws1] bot idx=2/4 出 蓝鳃战士(2费)——冲锋
+15:26:31.812 [ws1]   · turn=2 me=30hp 4手 1场[3/2] 2/2法力 opp=30hp 4手 1场[2/1] 0/1法力
+15:26:33.001 [ws1] 动作被拒: 非法动作下标: 7 | repro: --seed 3141592653 --deck vanilla --bot rule --lang zh --actions 3
+15:26:40.550 [ws1] [web] error: Cannot read properties of undefined @ ...:42:9
+```
+
+- `[ws1]` 是连接编号（多标签页同时开局时用来区分交错的行）。
+- `·` 行是一帧局面摘要：`血量+护甲 / 手牌数 / 场上随从[攻/血,…] / 剩余法力`。
+- `人 idx=3/4` = 人类选了第 3 个动作（共 4 个合法动作）；`bot` 行同理。
+- **`repro:` 行是复现钥匙**：动作被拒、断开、服务端异常时都会打印，直接抄给
+  `replay.py` 就能在本地原地重跑同一局（同 seed → 同牌序 → 同 bot 决策）：
+
+```bash
+.venv/bin/python server/scripts/replay.py --seed 3141592653 --deck vanilla \
+    --bot rule --lang zh --actions 3,0,5
+```
+
+  重放走的是和 WS 完全同一条路径（`GameSession.step_human`），跑完会打印当下
+  这帧的**合法动作表**（人话措辞，下标 = 前端点击发过来的 index），便于接着往下试。
 
 ## 已知边界（MVP 有意为之）
 
